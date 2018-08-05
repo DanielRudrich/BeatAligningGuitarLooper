@@ -6,3 +6,6 @@ Some resources for more information:
 - Project website: https://users.iem.at/rudrich/bagl/index.html
 - Master thesis fulltext: https://fedora.kug.ac.at/fedora/get/o:40827/bdef:Content/get
 - DAFx17 paper: http://www.dafx17.eca.ed.ac.uk/papers/DAFx17_paper_68.pdf
+
+
+Beware: One of my first C++/JUCE projects, so the code might not be very pretty ;-)
