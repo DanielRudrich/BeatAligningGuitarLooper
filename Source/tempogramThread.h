@@ -68,7 +68,8 @@ public:
                     int* newPathIndexPtr, Atomic<bool>* newPathIndexValidPtr, float* newPathPhasePtr, float* newPathMagPtr,
                     AudioBuffer<float>* newDrumsPtr, Atomic<bool>* newDrumsReadyPtr,
                     AudioSampleBuffer* newBdPtr,AudioSampleBuffer* newSnPtr,AudioSampleBuffer* newHhPtr,
-                    Atomic<int>* newStartCuePtr, Atomic<int>* newStopCuePtr)
+                    Atomic<int>* newStartCuePtr, Atomic<int>* newStopCuePtr,
+                    Atomic<int>* newGridSizePtr)
     {
         
         odfDataPtr = newOdfDataPtr;
@@ -93,6 +94,8 @@ public:
         
         startCuePtr = newStartCuePtr;
         stopCuePtr = newStopCuePtr;
+        
+        gridSizePtr = newGridSizePtr;
         
         startSample = 0;
         beatPos.resize(500); //should be plenty.. otherwise there might be some reallocations...
@@ -280,7 +283,7 @@ public:
                             if (!isnan(prevV) && prevIsNeg && !currIsNeg) //interpolate
                             {
                                 float delta = - prevV / (currV-prevV);
-                                int V = roundFloatToInt(odfTmPtr->getUnchecked(i-1) + delta * fftHopsize);
+                                int V = roundToInt(odfTmPtr->getUnchecked(i-1) + delta * fftHopsize);
                                 beatPos.add(V);
                             }
                             
@@ -294,8 +297,8 @@ public:
                     }
                     
                     // ================ INTERPOLATE BEATS IN GAPS ===
-                    int meanDiff = roundFloatToInt(fs*meanTau);
-                    int maxDiff = roundFloatToInt(meanDiff*1.8f);
+                    int meanDiff = roundToInt(fs*meanTau);
+                    int maxDiff = roundToInt(meanDiff*1.8f);
                     DBG("letztes: " << beatPos.getLast());
                     int initialSizeOfBeats = beatPos.size();
                     for (int i=1; i<initialSizeOfBeats; ++i)
@@ -303,12 +306,12 @@ public:
                         int diff = beatPos.getUnchecked(i) - beatPos.getUnchecked(i-1);
                         if (diff>maxDiff) // do some interpolation
                         {
-                            int nBeatsToAddPlusOne = roundFloatToInt(((float)diff)/meanDiff);
+                            int nBeatsToAddPlusOne = roundToInt(((float)diff)/meanDiff);
                             DBG("flat: " <<((float)diff)/meanDiff << "beats to insert+1:" << nBeatsToAddPlusOne);
                             float step = diff/nBeatsToAddPlusOne;
                             for (int nBeat=1; nBeat<nBeatsToAddPlusOne; ++nBeat)
                             {
-                                beatPos.add(roundFloatToInt(beatPos.getUnchecked(i-1) + nBeat*step));
+                                beatPos.add(roundToInt(beatPos.getUnchecked(i-1) + nBeat*step));
                             }
                         }
                     }
@@ -319,7 +322,7 @@ public:
                     }
                     beatPos.sort();
                     
-                    // ====== ALIGN START AND STOP CUES TO NEXT BEAT ===
+                    // ====== ALIGN START AND STOP CUES  ===
                     int startC = startCuePtr->get();
                     int stopC = stopCuePtr->get();
                     int firstBeat = 0;
@@ -337,17 +340,26 @@ public:
                         }
                         prevDist = curDist;
                     }
+                    
+                    int gridSize = gridSizePtr->get();
+                    lastBeat = lastBeat - (lastBeat-firstBeat)%gridSize;
+                    DBG("grid size: " << gridSize << " - firstBeatInd: " << firstBeat << " - lastBeat init: " << lastBeat);
                     prevDist = 1234567; //dummy value
                     for (int i=beatPos.size()-1; i>=0; --i)
                     {
-                        int curDist = abs(beatPos.getUnchecked(i) - stopC);
-                        if (curDist > prevDist) {
-                            *stopCuePtr = beatPos.getUnchecked(i+1);
-                            lastBeat = i+1;
-                            DBG("NEW STOP-CUE: " << stopCuePtr->get());
-                            break;
+                        if ((i-firstBeat)%gridSize == 0) {
+                            DBG("i: " << i << " - i-firstbeat: " << i-firstBeat);
+                            
+                            int curDist = abs(beatPos.getUnchecked(i) - stopC);
+                            if (curDist > prevDist) {
+                                lastBeat = i+gridSize;
+                                *stopCuePtr = beatPos.getUnchecked(lastBeat);
+                                DBG("stop cue index: " << lastBeat);
+                                DBG("NEW STOP-CUE: " << stopCuePtr->get());
+                                break;
+                            }
+                            prevDist = curDist;
                         }
-                        prevDist = curDist;
                     }
                     
                     DBG("adding drums");
@@ -405,6 +417,7 @@ private:
     
     float hannWindow[tgWinL];
     
+    Atomic<int> *gridSizePtr = nullptr;
     
     Eigen::VectorXcf prevData;
     Eigen::ArrayXcf currData;

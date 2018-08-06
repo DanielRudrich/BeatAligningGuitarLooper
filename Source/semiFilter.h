@@ -1,6 +1,11 @@
 #ifndef semiFilter_h
  #define semiFilter_h
-#define semiFilterNumValues 1348
+#define nSemitoneFilterValues 1348
+#define firstFFTBin 1
+#define lastFFTBin 697
+#define nFFTBins 698
+#define nSemitones 50
+
 const float semiFilterI[1348]= {1,
                               1,
                               1,

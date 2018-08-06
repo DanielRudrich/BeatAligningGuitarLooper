@@ -12,6 +12,8 @@
       <FILE id="kS6y6M" name="sn_32768.wav" compile="0" resource="1" file="Source/drumparts/sn_32768.wav"/>
     </GROUP>
     <GROUP id="{DDFBF9C8-7304-DDB9-923F-5F1DDBFDD437}" name="Source">
+      <FILE id="wXgZiy" name="OdfSpectralFluxLogFiltered.h" compile="0" resource="0"
+            file="Source/OdfSpectralFluxLogFiltered.h"/>
       <FILE id="ZCrZGq" name="logos.h" compile="0" resource="0" file="Source/logos.h"/>
       <FILE id="gW6EUH" name="OneSidedAudioVisualiserComponent.h" compile="0"
             resource="0" file="Source/OneSidedAudioVisualiserComponent.h"/>
@@ -37,10 +39,12 @@
   </MAINGROUP>
   <EXPORTFORMATS>
     <XCODE_MAC targetFolder="Builds/MacOSX" extraDefs="DEFTEST=1" smallIcon="xZFUoe"
-               bigIcon="HhvRYv">
+               bigIcon="HhvRYv" externalLibraries="fftw3f">
       <CONFIGURATIONS>
-        <CONFIGURATION name="Debug" isDebug="1" optimisation="1" targetName="BaGLApp"/>
-        <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="BaGLApp"/>
+        <CONFIGURATION name="Debug" isDebug="1" optimisation="1" targetName="BaGLApp"
+                       headerPath="/usr/local/include" libraryPath="/usr/local/lib/"/>
+        <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="BaGLApp"
+                       headerPath="/usr/local/include" libraryPath="/usr/local/lib/"/>
       </CONFIGURATIONS>
       <MODULEPATHS>
         <MODULEPATH id="juce_core" path="../../../../../Applications/JUCE/modules"/>
@@ -61,10 +65,12 @@
       </MODULEPATHS>
     </XCODE_MAC>
     <XCODE_IPHONE targetFolder="Builds/iOS" iosScreenOrientation="portraitlandscape"
-                  microphonePermissionNeeded="1" extraDefs="">
+                  microphonePermissionNeeded="1" extraDefs="" externalLibraries="fftw3f">
       <CONFIGURATIONS>
-        <CONFIGURATION name="Debug" isDebug="1" optimisation="1" targetName="BaGLApp"/>
-        <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="BaGLApp"/>
+        <CONFIGURATION name="Debug" isDebug="1" optimisation="1" targetName="BaGLApp"
+                       libraryPath="/usr/local/lib/" headerPath="/usr/local/include"/>
+        <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="BaGLApp"
+                       libraryPath="/usr/local/lib/" headerPath="/usr/local/include"/>
       </CONFIGURATIONS>
       <MODULEPATHS>
         <MODULEPATH id="juce_video" path="../../../../../Applications/JUCE/modules"/>
@@ -127,7 +133,7 @@
     <MODULE id="juce_opengl" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
     <MODULE id="juce_video" showAllCode="1" useLocalCopy="0" useGlobalPath="1"/>
   </MODULES>
-  <JUCEOPTIONS JUCE_DSP_USE_SHARED_FFTW="1"/>
+  <JUCEOPTIONS JUCE_DSP_USE_STATIC_FFTW="1"/>
   <LIVE_SETTINGS>
     <OSX/>
   </LIVE_SETTINGS>

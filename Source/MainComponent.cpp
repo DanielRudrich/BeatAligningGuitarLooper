@@ -8,6 +8,8 @@
 
 #include "../JuceLibraryCode/JuceHeader.h"
 #include "Eigen/Eigen"
+#include <fftw3.h>
+#include "OdfSpectralFluxLogFiltered.h"
 
 #define fs 48000
 
@@ -30,7 +32,7 @@
     #define listen2inp false
     #define advBufferSize 64
 #else
-    #define listen2inp true
+    #define listen2inp false
     #define advBufferSize 32
 #endif
 
@@ -58,8 +60,8 @@ class MainContentComponent   : public AudioAppComponent, public MidiInputCallbac
 public:
     //==============================================================================
     MainContentComponent()
-    : tgData(nTaus,odfFs*maxLoopTimeInSec), avcIn(1), avcOdf(1),
-    imgTempogram(Image::PixelFormat::ARGB,odfFs*maxLoopTimeInSec,nTaus,true)
+    : tgData(nTaus,odfFs*maxLoopTimeInSec), avcIn(2), avcOdf(1),
+    imgTempogram(Image::PixelFormat::ARGB, odfFs * maxLoopTimeInSec, nTaus, true)
     {
         setSize (800, 600);
         setLookAndFeel(&globalLaF);
@@ -68,7 +70,7 @@ public:
         
         addAndMakeVisible(&title);
         title.setTitle(String("beat-aligning"),String("guitar looper"));
-        title.setFont(globalLaF.robotoBold,globalLaF.robotoLight);
+        title.setFont(globalLaF.robotoBold, globalLaF.robotoLight);
         
         addAndMakeVisible(&kugLogo);
         addAndMakeVisible(&iemLogo);
@@ -102,6 +104,20 @@ public:
         settingsButton.setButtonText("Audio/MIDI settings");
         settingsButton.addListener(this);
         
+        addAndMakeVisible(&lbCbBeatAlignmentGrid);
+        lbCbBeatAlignmentGrid.setText("grid size (beats)");
+        lbCbBeatAlignmentGrid.setJustification(Justification::left);
+        
+        addAndMakeVisible(&cbBeatAlignmentGrid);
+        cbBeatAlignmentGrid.setComponentID("gridSize");
+        cbBeatAlignmentGrid.addListener(this);
+        cbBeatAlignmentGrid.addItem("1", 1);
+        cbBeatAlignmentGrid.addItem("4", 4);
+        cbBeatAlignmentGrid.addItem("8", 8);
+        //cbBeatAlignmentGrid.addItem("16", 16);
+        cbBeatAlignmentGrid.setSelectedId(1);
+        cbBeatAlignmentGrid.setJustificationType(Justification::centred);
+        
         addAndMakeVisible(&midiButton);
         midiButton.setComponentID("record");
         midiButton.setButtonText("Record/Overdub");
@@ -115,10 +131,12 @@ public:
         addAndMakeVisible(&avcIn);
         avcIn.setBufferSize(200);
         avcIn.setSamplesPerBlock(4800);
+        avcIn.setRepaintRate(20);
         
         addAndMakeVisible(&avcOdf);
         avcOdf.setBufferSize(400);
         avcOdf.setSamplesPerBlock(2);
+        avcOdf.setRepaintRate(20);
         
         addAndMakeVisible(&imgCmp);
         imgCmp.setImage(imgTempogram);
@@ -155,7 +173,7 @@ public:
         setAudioChannels (1, 2);
         
         midiCcRecord = 16;
-        midiCcReset = 17;
+        midiCcReset = 18;
         
         
         deviceManager.addMidiInputCallback("", this);
@@ -174,13 +192,16 @@ public:
         DBG(deviceManager.getCurrentAudioDevice()->getName());
         
 
+
+        
+        
         startTimer(50);
     }
     
     ~MainContentComponent()
     {
         shutdownAudio();
-        setLookAndFeel (nullptr);
+        setLookAndFeel(nullptr);
 //        WavAudioFormat* test = new WavAudioFormat();
 //        File outputFile = File("/Users/rudrich/output.wav");
 //        FileOutputStream* outputTo = outputFile.createOutputStream();
@@ -190,7 +211,6 @@ public:
 //        delete test;
     }
     
-    
     enum systemState {
         startIdle,
         recordStart,
@@ -199,6 +219,7 @@ public:
         looping,
         overdub
     };
+    
     //==============================================================================
     void prepareToPlay (int samplesPerBlockExpected, double newSampleRate) override
     {
@@ -225,7 +246,6 @@ public:
         loopDataMaxOffset = sampleRate * (maxLoopTimeInSec - overheadTimeInSec) - 2*samplesPerBlockExpected; //just to be safe
         prePlayData.setSize(1, sampleRate * prePlayTimeInSec);
         
-
         
         reset();
     }
@@ -279,9 +299,11 @@ public:
         thrTg.initialise(&odfData, &validOdfData, &odfTm, &odfDataFinished, &tgData, &validTgData, &tgDataFinished,
                          pathIndex, &pathIndexValid, pathPhase, pathMag,
                          &drums, &drumsReady, &bd, &sn, &hh,
-                         &startCue, &stopCue);
+                         &startCue, &stopCue,
+                         &beatAlignmentGridSize);
         thrTg.startThread(5);
     }
+    
     void getNextAudioBlock (const AudioSourceChannelInfo& bufferToFill) override
     {
         //AudioIODevice* device = deviceManager.getCurrentAudioDevice();
@@ -321,35 +343,41 @@ public:
         
         if (footSwitchPressed)
         {
-            switch (state) {
-                case startIdle:
-                    int firstNumCopy;
-                    firstNumCopy = prePlayMaxOffset-prePlayWriteOffset;
-                    loopData.copyFrom(0, 0, prePlayData, 0, prePlayWriteOffset, firstNumCopy);
-                    loopData.copyFrom(0, firstNumCopy, prePlayData, 0, 0, prePlayWriteOffset);
-                    state = recording;
-                    startCue = loopDataWriteOffset+footSwitchSamplePosition;
-                    loopDataReadOffset = startCue.get();
-                    DBG("start Cue: " << startCue.get() << "! start recording");
-                    break;
-                    
-                case recording:
-                    stopCue = loopDataWriteOffset+footSwitchSamplePosition;
-                    state = recordOverhead;
-                    DBG("stop Cue: " << stopCue.get() << "! recording overhead now");
-                    break;
-                    
-                case recordOverhead:
-                    break;
-                case looping:
-                    state = overdub;
-                    break;
-                case overdub:
-                    state = looping;
-                    break;
-                default:
-                    break;
+            if (state == recording && (loopDataWriteOffset + footSwitchSamplePosition) < 96000)
+            {
+                DBG("too few samples recorded!");
+                doReset = true;
             }
+            else
+                switch (state) {
+                    case startIdle:
+                        int firstNumCopy;
+                        firstNumCopy = prePlayMaxOffset-prePlayWriteOffset;
+                        loopData.copyFrom(0, 0, prePlayData, 0, prePlayWriteOffset, firstNumCopy);
+                        loopData.copyFrom(0, firstNumCopy, prePlayData, 0, 0, prePlayWriteOffset);
+                        state = recording;
+                        startCue = loopDataWriteOffset + footSwitchSamplePosition;
+                        loopDataReadOffset = startCue.get();
+                        DBG("start Cue: " << startCue.get() << "! start recording");
+                        break;
+                        
+                    case recording:
+                        stopCue = loopDataWriteOffset + footSwitchSamplePosition;
+                        state = recordOverhead;
+                        DBG("stop Cue: " << stopCue.get() << "! recording overhead now");
+                        break;
+                        
+                    case recordOverhead:
+                        break;
+                    case looping:
+                        state = overdub;
+                        break;
+                    case overdub:
+                        state = looping;
+                        break;
+                    default:
+                        break;
+                }
             stateHasChanged = true;
         }
         
@@ -435,7 +463,8 @@ public:
         
         // ====================== OUTPUT =====================
         const float* inBuffer = bufferToFill.buffer->getReadPointer (0, bufferToFill.startSample);
-        float* outBuffer = bufferToFill.buffer->getWritePointer (0, bufferToFill.startSample);
+        float* outBufferLeft = bufferToFill.buffer->getWritePointer (0, bufferToFill.startSample);
+        float* outBufferRight = bufferToFill.buffer->getWritePointer (1, bufferToFill.startSample);
         
         // visualize new input
         avcIn.pushBuffer(bufferToFill);
@@ -453,27 +482,26 @@ public:
             {
                 int firstNumCopy;
                 firstNumCopy = stopC-loopDataReadOffset;
-                FloatVectorOperations::add(outBuffer, loopDataPtr+loopDataReadOffset, firstNumCopy);
-                FloatVectorOperations::add(outBuffer+firstNumCopy, loopDataPtr+startC, blockSize - firstNumCopy);
+                FloatVectorOperations::add(outBufferLeft, loopDataPtr+loopDataReadOffset, firstNumCopy);
+                FloatVectorOperations::add(outBufferLeft+firstNumCopy, loopDataPtr+startC, blockSize - firstNumCopy);
                 if (copyDrums)
                 {
-                    FloatVectorOperations::add(outBuffer, drumDataPtr+loopDataReadOffset, firstNumCopy);
-                    FloatVectorOperations::add(outBuffer+firstNumCopy, drumDataPtr+startC, blockSize - firstNumCopy);
+                    FloatVectorOperations::add(outBufferLeft, drumDataPtr+loopDataReadOffset, firstNumCopy);
+                    FloatVectorOperations::add(outBufferLeft+firstNumCopy, drumDataPtr+startC, blockSize - firstNumCopy);
                 }
                 if (state == overdub) {
                     loopData.addFrom(0, loopDataReadOffset, inpCopy, 0, 0, firstNumCopy);
                     loopData.addFrom(0, startC, inpCopy, 0, firstNumCopy, blockSize - firstNumCopy);
                 }
                     
-                    
                 loopDataReadOffset = startC + blockSize - firstNumCopy;
             }
             else
             {
-                FloatVectorOperations::add(outBuffer, loopDataPtr+loopDataReadOffset, blockSize);
+                FloatVectorOperations::add(outBufferLeft, loopDataPtr+loopDataReadOffset, blockSize);
                 if (copyDrums)
                 {
-                    FloatVectorOperations::add(outBuffer, drumDataPtr+loopDataReadOffset, blockSize);
+                    FloatVectorOperations::add(outBufferLeft, drumDataPtr+loopDataReadOffset, blockSize);
                 }
                 if (state == overdub)
                 {
@@ -486,10 +514,9 @@ public:
         }
         
         
-        // make that mono signal stereo!
-        outBuffer = bufferToFill.buffer->getWritePointer (1, bufferToFill.startSample);
-        FloatVectorOperations:: copy(outBuffer, inBuffer, blockSize);
-        
+        //make that mono signal stereo!
+        FloatVectorOperations::copy (outBufferRight, outBufferLeft, blockSize);
+
         // visualize new input
         avcIn.pushBuffer(bufferToFill);
         
@@ -552,6 +579,10 @@ public:
         row.removeFromLeft(5);
         lbDrums.setBounds(row);
         
+        controlArea.removeFromTop(10); //spacing
+        row = controlArea.removeFromTop(25);
+        cbBeatAlignmentGrid.setBounds(row.removeFromLeft(60));
+        lbCbBeatAlignmentGrid.setBounds(row);
         
         
         resetButton.setBounds(controlArea.removeFromBottom(100));
@@ -613,17 +644,18 @@ public:
     {
         //DBG(key.getKeyCode());
         
-        if (key.getKeyCode() == 68) {
+        if (key.getKeyCode() == 68) { // d
             tbDrums.triggerClick();
         }
         else if (key.getKeyCode() == 83) {
             showAudioSettingsDialog();
         }
-        else if (key.getKeyCode() == 77) {
+        else if (key.getKeyCode() == 77) { // m
             tbListen.triggerClick();
         }
         return true;
     }
+    
     void comboBoxChanged (ComboBox* comboBox) override
     {
         if (comboBox->getComponentID() == "bufferSize")
@@ -645,6 +677,10 @@ public:
         {
             midiCcReset = comboBox->getSelectedId()-1;
         }
+        else if (comboBox->getComponentID() == "gridSize")
+        {
+            beatAlignmentGridSize = comboBox->getSelectedId();
+        }
     }
     
     void showAudioSettingsDialog()
@@ -663,7 +699,7 @@ public:
                                                    totalOutChannels,
                                                    midiCcRecord.get(),
                                                    midiCcReset.get()));
-        o.content->setSize (500, 450);
+        o.content->setSize (500, 650);
         
         o.dialogTitle                   = TRANS("Audio/MIDI Settings");
         o.dialogBackgroundColour        = globalLaF.ClBackground;
@@ -714,7 +750,7 @@ public:
                     else
                     {
                     data *= 0.02f*63;
-                     cidx = roundFloatToInt(data);
+                     cidx = roundToInt(data);
                     if (cidx > 63) cidx = 63;
                     }
                     //DBG(tempogram(i,processedTgData).real());
@@ -759,6 +795,7 @@ private:
     Atomic<bool> stateHasChanged;
     odfThread thrOdf;
     tempogramThread thrTg;
+    Atomic<int> beatAlignmentGridSize;
     
     bool doReset;
     
@@ -804,8 +841,6 @@ private:
     // MIDI
     MidiBuffer incomingMidi;
     MidiMessageCollector messageCollector;
-    //Atomic<int> midiCcRecord; is public
-    //Atomic<int> midiCcReset;
     
     // Audio param
     int blockSize;
@@ -820,6 +855,9 @@ private:
     
     AudioVisualiserComponent avcIn;
     OneSidedAudioVisualiserComponent avcOdf;
+    
+    ComboBox cbBeatAlignmentGrid;
+    simpleLabel lbCbBeatAlignmentGrid;
     
     ToggleButton tbListen;
     ToggleButton tbDrums;
